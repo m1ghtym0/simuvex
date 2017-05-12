@@ -29,6 +29,13 @@ class Page(object):
 
         :param executable:  Whether the page is executable, typically this will depend on whether the binary has an
                             executable stack.
+        :type executable: bool
+        :param permissions: BV of size 3, containing the permission flags for the page.
+        :type permissions: claripy.ast.BV
+        :param storage: Dict mapping page-indices to SimMemoryObjects.
+        :type storage: dict
+        :param sinkhole: SimMemoryObject of the size of the whole page, used as a fallback for values not in storage.
+        :type sinkhole: SimMemoryObject
         """
 
         self._page_size = page_size
@@ -83,12 +90,14 @@ class Page(object):
                 raise
 
     def __setitem__(self, idx, item):
-        if idx is self._sinkhole:
+        if item is self._sinkhole:
             if idx in self._storage:
                 del self._storage[idx]
                 self._sorted_keys = None
             return
         else:
+            if idx >= self._page_size:
+                raise Exception("Index {} can not be in page of size {}".format(idx, self._page_size))
             self._storage[idx] = item
             self._sorted_keys = None
 
