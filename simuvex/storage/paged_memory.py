@@ -812,7 +812,7 @@ class SimPagedMemory(object):
 
         return page.permissions
 
-    def map_region(self, addr, length, permissions):
+    def map_region(self, addr, length, permissions, init_zero=False):
         if o.TRACK_MEMORY_MAPPING not in self.state.options:
             return
 
@@ -843,7 +843,8 @@ class SimPagedMemory(object):
 
         for page in xrange(pages):
             page_id = base_page_num + page
-            self._pages[page_id] = Page(self._page_size, permissions)
+            sinkhole = None if not init_zero else SimMemoryObject(claripy.BVV(0, self._page_size * 8), page_id * self._page_size)
+            self._pages[page_id] = Page(self._page_size, permissions, sinkhole=sinkhole)
             self._symbolic_addrs[page_id] = set()
 
     def unmap_region(self, addr, length):

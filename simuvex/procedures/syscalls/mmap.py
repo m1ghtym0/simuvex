@@ -71,7 +71,7 @@ class mmap(simuvex.SimProcedure):
 
 
         try:
-            self.state.memory.map_region(addr, size, prot[2:0])
+            self.state.memory.map_region(addr, size, prot[2:0], init_zero = bool(flags & MAP_ANONYMOUS))
 
         except simuvex.SimMemoryError:
             # This page is already mapped
