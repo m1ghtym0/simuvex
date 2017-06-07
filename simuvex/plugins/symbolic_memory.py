@@ -455,18 +455,15 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         if len(items) == 1 and items[0][1].includes(addr) and items[0][1].includes(addr + num_bytes - 1):
             return items[0][1].bytes_at(addr, num_bytes)
 
-        missing_mo = None
-        def missing(missing_mo=missing_mo):
-            if missing_mo is None:
-                missing_mo = self._fill_missing(addr, num_bytes)
-            return missing_mo
-
         segments = [ ]
         last_missing = addr + num_bytes - 1
         for mo_addr,mo in reversed(items):
             if not mo.includes(last_missing):
                 # add missing bytes
-                segments.append(missing().bytes_at(mo.last_addr+1, last_missing - mo.last_addr))
+                start_addr = mo.last_addr + 1
+                end_addr = last_missing - mo.last_addr
+                fill_mo = self._fill_missing(start_addr, end_addr)
+                segments.append(fill_mo.bytes_at(start_addr, end_addr))
                 last_missing = mo.last_addr
 
             # add the normal segment
@@ -475,7 +472,10 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
 
         # handle missing bytes at the beginning
         if last_missing != addr - 1:
-            segments.append(missing().bytes_at(addr, last_missing - addr + 1))
+            start_addr = addr
+            end_addr = last_missing - addr + 1
+            fill_mo = self._fill_missing(start_addr, end_addr)
+            segments.append(fill_mo.bytes_at(start_addr, end_addr))
 
         # reverse the segments to put them in the right order
         segments.reverse()
