@@ -77,6 +77,7 @@ class SimConcretizationStrategy(object):
         pass
 
 from .any import SimConcretizationStrategyAny
+from .controlled_data import SimConcretizationStrategyControlledData
 from .max import SimConcretizationStrategyMax
 from .nonzero import SimConcretizationStrategyNonzero
 from .nonzero_range import SimConcretizationStrategyNonzeroRange
