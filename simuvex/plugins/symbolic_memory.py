@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from collections import defaultdict
 
 import logging
 import itertools
@@ -673,66 +674,41 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
                 return req
             else:
                 raise
-        num_addresses = len(req.actual_addresses)
 
         #
         # Next, get the fallback values:
         #
 
-        if req.condition is not None or (req.size is not None and self.state.se.symbolic(req.size)) or num_addresses > 1:
-            req.fallback_values = [ self._read_from(a, max_bytes) for a in req.actual_addresses ]
-            if req.endness == "Iend_LE" or (req.endness is None and self.endness == "Iend_LE"):
-                req.fallback_values = [ fv.reversed for fv in req.fallback_values ]
-        else:
-            req.fallback_values = [ None ] * num_addresses
+        req.fallback_values = [ self._read_from(a, max_bytes) for a in req.actual_addresses ]
 
         #
-        # Next, conditionally size it
-        #
-
-        if req.size is None:
-            req.symbolic_sized_values = [ req.data ] * num_addresses
-        elif self.state.se.symbolic(req.size):
-            req.symbolic_sized_values = [ ]
-            req.constraints += [ self.state.se.ULE(req.size, max_bytes) ]
-
-            for fv in req.fallback_values:
-                befores = fv.chop(bits=8)
-                afters = req.data.chop(bits=8)
-                sv = self.state.se.Concat(*[
-                    self.state.se.If(self.state.se.UGT(req.size, i), a, b)
-                    for i,(a,b) in enumerate(zip(afters,befores))
-                ])
-                req.symbolic_sized_values.append(sv)
-        else:
-            needed_bytes = self.state.se.any_int(req.size)
-            if needed_bytes < max_bytes:
-                sv = req.data[max_bytes*8-1:(max_bytes-needed_bytes)*8]
-                req.symbolic_sized_values = [ sv ] * num_addresses
-                req.fallback_values = [
-                    (fv[max_bytes*8-1:(max_bytes-needed_bytes)*8] if fv is not None else None)
-                    for fv in req.fallback_values
-                ]
-            #elif needed_bytes > max_bytes:
-            #   raise SimMemoryError("invalid length passed to SimSymbolicMemory._store")
-            else:
-                req.symbolic_sized_values = [ req.data ] * num_addresses
-
-        #
-        # Next, apply the condition
+        # Next, apply the condition and create byte-sized chunks
         #
 
         req.conditional_values = [ ]
-        for a,fv,sv in zip(req.actual_addresses, req.fallback_values, req.symbolic_sized_values):
-            if req.condition is None and num_addresses == 1:
-                cv = sv
-            elif req.condition is not None and num_addresses == 1:
-                cv = self.state.se.If(req.condition, sv, fv)
-            elif req.condition is None and num_addresses != 1:
-                cv = self.state.se.If(req.addr == a, sv, fv)
-            elif req.condition is not None and num_addresses != 1:
-                cv = self.state.se.If(self.state.se.And(req.addr == a, req.condition), sv, fv)
+        byte_dict = defaultdict(list)
 
+        if req.endness == "Iend_LE" or (req.endness is None and self.endness == "Iend_LE"):
+            req.data = req.data.reversed
+        # chop data into byte-chunks
+        data_bytes = req.data.chop(bits=8)
+
+        for a, fv in zip(req.actual_addresses, req.fallback_values):
+            fallback_bytes = fv.chop(8)
+            for index, (d_byte, fv_byte) in enumerate(zip(data_bytes, fallback_bytes)):
+                # create a dict of all all possible values for a certain address
+                byte_dict[a+index].append((a, index, d_byte, fv_byte))
+
+        for byte_addr in sorted(byte_dict.keys()):
+            write_list = byte_dict[byte_addr]
+            assert len(write_list) > 0
+            assert all(v[3] is write_list[0][3] for v in write_list)
+            cv = write_list[0][3]
+            for a, index, d_byte, fv_byte in write_list:
+                # create the ast for each byte
+                cond = claripy.BoolV(True) if req.condition is None else req.condition
+                size = req.size if req.size is not None else max_bytes
+                cv = self.state.se.If(self.state.se.And(req.addr == a, size > index, cond), d_byte, cv)
             req.conditional_values.append(cv)
 
         if type(req.addr) not in (int, long) and req.addr.symbolic:
@@ -752,19 +728,10 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
             req.simplified_values = list(req.conditional_values)
 
         #
-        # fix endness
-        #
-
-        if req.endness == "Iend_LE" or (req.endness is None and self.endness == "Iend_LE"):
-            req.stored_values = [ sv.reversed for sv in req.simplified_values ]
-        else:
-            req.stored_values = list(req.simplified_values)
-
-        #
         # store it!!!
         #
-
-        for a,sv in zip(req.actual_addresses, req.stored_values):
+        req.stored_values = req.simplified_values
+        for a,sv in zip(sorted(byte_dict.keys()), req.stored_values):
             # here, we ensure the uuids are generated for every expression written to memory
             sv.make_uuid()
             size = len(sv)/8
