@@ -261,10 +261,6 @@ class MemoryStoreRequest(object):
         self.actual_addresses = None
         self.constraints = [ ]
 
-        self.fallback_values = None
-        self.symbolic_sized_values = None
-        self.conditional_values = None
-        self.simplified_values = None
         self.stored_values = None
 
     def _adjust_condition(self, state):

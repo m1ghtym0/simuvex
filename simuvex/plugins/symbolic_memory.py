@@ -650,98 +650,226 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         l.debug("Doing a store...")
         req._adjust_condition(self.state)
 
-        if req.size is not None and self.state.se.symbolic(req.size) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
+        if req.size is not None and self.state.solver.symbolic(req.size) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
             return req
 
-        if self.state.se.symbolic(req.addr) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
+        if self.state.solver.symbolic(req.addr) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
             return req
 
-        if req.size is not None and self.state.se.symbolic(req.size) and options.CONCRETIZE_SYMBOLIC_WRITE_SIZES in self.state.options:
-            new_size = self.state.se.any_int(req.size)
+        if req.size is not None and self.state.solver.symbolic(req.size) and options.CONCRETIZE_SYMBOLIC_WRITE_SIZES in self.state.options:
+            new_size = self.state.solver.any_int(req.size)
             req.constraints.append(req.size == new_size)
             req.size = new_size
 
-        max_bytes = len(req.data)/8
+        max_bytes = req.data.length/8
+
+        if req.size is None:
+            req.size = claripy.BVV(max_bytes, req.data.length)
+
+        req.constraints += [self.state.solver.ULE(req.size, max_bytes)]
+
+        condition = req.condition if req.condition is not None else claripy.BoolV(True)
 
         #
         # First, resolve the addresses
         #
 
         try:
-            req.actual_addresses = self.concretize_write_addr(req.addr)
+            req.actual_addresses = sorted(self.concretize_write_addr(req.addr))
         except SimMemoryError:
             if options.CONSERVATIVE_WRITE_STRATEGY in self.state.options:
                 return req
             else:
                 raise
 
-        #
-        # Next, get the fallback values:
-        #
-
-        req.fallback_values = [ self._read_from(a, max_bytes) for a in req.actual_addresses ]
-
-        #
-        # Next, apply the condition and create byte-sized chunks
-        #
-
-        req.conditional_values = [ ]
-        byte_dict = defaultdict(list)
-
-        if req.endness == "Iend_LE" or (req.endness is None and self.endness == "Iend_LE"):
-            req.data = req.data.reversed
-        # chop data into byte-chunks
-        data_bytes = req.data.chop(bits=8)
-
-        for a, fv in zip(req.actual_addresses, req.fallback_values):
-            fallback_bytes = fv.chop(8)
-            for index, (d_byte, fv_byte) in enumerate(zip(data_bytes, fallback_bytes)):
-                # create a dict of all all possible values for a certain address
-                byte_dict[a+index].append((a, index, d_byte, fv_byte))
-
-        for byte_addr in sorted(byte_dict.keys()):
-            write_list = byte_dict[byte_addr]
-            assert len(write_list) > 0
-            assert all(v[3] is write_list[0][3] for v in write_list)
-            cv = write_list[0][3]
-            for a, index, d_byte, fv_byte in write_list:
-                # create the ast for each byte
-                cond = claripy.BoolV(True) if req.condition is None else req.condition
-                size = req.size if req.size is not None else max_bytes
-                cv = self.state.se.If(self.state.se.And(req.addr == a, size > index, cond), d_byte, cv)
-            req.conditional_values.append(cv)
-
         if type(req.addr) not in (int, long) and req.addr.symbolic:
-            conditional_constraint = self.state.se.Or(*[ req.addr == a for a in req.actual_addresses ])
+            conditional_constraint = self.state.solver.Or(*[ req.addr == a for a in req.actual_addresses ])
             if (conditional_constraint.symbolic or  # if the constraint is symbolic
                     conditional_constraint.is_false()):  # if it makes the state go unsat
                 req.constraints.append(conditional_constraint)
 
         #
-        # now simplify
+        # Prepare memory objects
         #
 
-        if (self.category == 'mem' and options.SIMPLIFY_MEMORY_WRITES in self.state.options) or \
-           (self.category == 'reg' and options.SIMPLIFY_REGISTER_WRITES in self.state.options):
-            req.simplified_values = [ self.state.se.simplify(cv) for cv in req.conditional_values ]
+        if not self.state.solver.symbolic(req.size) and not self.state.solver.symbolic(req.addr):
+            store_list = self._store_fully_concrete(req.addr, req.size, req.data, req.endness, condition)
+        elif not self.state.solver.symbolic(req.addr):
+            store_list = self._store_symbolic_size(req.addr, req.size, req.data, req.endness, condition)
+        elif not self.state.solver.symbolic(req.size):
+            store_list = self._store_symbolic_addr(req.addr, req.actual_addresses, req.size, req.data, req.endness, condition)
         else:
-            req.simplified_values = list(req.conditional_values)
+            store_list = self._store_fully_symbolic(req.addr, req.actual_addresses, req.size, req.data, req.endness, condition)
 
         #
         # store it!!!
         #
-        req.stored_values = req.simplified_values
-        for a,sv in zip(sorted(byte_dict.keys()), req.stored_values):
-            # here, we ensure the uuids are generated for every expression written to memory
-            sv.make_uuid()
-            size = len(sv)/8
-            self.state.scratch.dirty_addrs.update(range(a, a+size))
-            mo = SimMemoryObject(sv, a, length=size)
-            self.mem.store_memory_object(mo)
+        req.stored_values = []
+        if (self.category == 'mem' and options.SIMPLIFY_MEMORY_WRITES in self.state.options) or \
+           (self.category == 'reg' and options.SIMPLIFY_REGISTER_WRITES in self.state.options):
+            for store_item in store_list:
+                store_item['value'] = self.state.solver.simplify(store_item['value'])
+
+                if req.endness == "Iend_LE" or (req.endness is None and self.endness == "Iend_LE"):
+                    store_item['value'] = store_item['value'].reversed
+
+                req.stored_values.append(store_item['value'])
+                self._insert_memory_object(store_item['value'], store_item['addr'], store_item['size'])
+        else:
+            for store_item in store_list:
+                if req.endness == "Iend_LE" or (req.endness is None and self.endness == "Iend_LE"):
+                    store_item['value'] = store_item['value'].reversed
+
+                req.stored_values.append(store_item['value'])
+                self._insert_memory_object(store_item['value'], store_item['addr'], store_item['size'])
 
         l.debug("... done")
         req.completed = True
         return req
+
+    def _insert_memory_object(self, value, address, size):
+        value.make_uuid()
+        self.state.scratch.dirty_addrs.update(range(address, address+size))
+        mo = SimMemoryObject(value, address, length=size)
+        self.mem.store_memory_object(mo)
+
+    def _store_fully_concrete(self, address, size, data, endness, condition):
+        assert address is not None and not self.state.solver.symbolic(address)
+        assert size is not None and not self.state.solver.symbolic(size)
+
+        size = self.state.solver.any_int(size)
+        if size < data.length/8:
+            data = data[size*8-1:]
+        address = self.state.solver.any_int(address)
+        original_value = self._read_from(address, size)
+        if endness == "Iend_LE" or (endness is None and self.endness == "Iend_LE"):
+            original_value = original_value.reversed
+        conditional_value = self.state.solver.If(condition, data, original_value)
+
+        return [ dict(value=conditional_value, addr=address, size=size) ]
+
+
+    def _store_symbolic_size(self, address, size, data, endness, condition):
+        assert address is not None and not self.state.solver.symbolic(address)
+        assert size is not None and self.state.solver.symbolic(size)
+
+        address = self.state.solver.any_int(address)
+        max_bytes = data.length/8
+        original_value =  self._read_from(address, max_bytes)
+        if endness == "Iend_LE" or (endness is None and self.endness == "Iend_LE"):
+            original_value = original_value.reversed
+
+
+        befores = original_value.chop(bits=8)
+        afters = data.chop(bits=8)
+        stored_value = self.state.se.Concat(*[
+            self.state.solver.If(self.state.solver.UGT(size, i), a, b)
+            for i, (a, b) in enumerate(zip(afters, befores))
+        ])
+
+        conditional_value = self.state.solver.If(condition, stored_value, original_value)
+
+        return [ dict(value=conditional_value, addr=address, size=max_bytes) ]
+
+    def _store_symbolic_addr(self, address,  addresses, size, data, endness, condition):
+        assert address is not None and self.state.solver.symbolic(address)
+        assert size is not None and not self.state.solver.symbolic(size)
+        size = self.state.solver.any_int(size)
+        segments = self._get_segments(addresses, size)
+
+        original_values = [ self._read_from(segment['start'], segment['size']) for segment in segments ]
+        if endness == "Iend_LE" or (endness is None and self.endness == "Iend_LE"):
+            original_values = [ ov.reversed  for ov in original_values ]
+
+        stored_values = []
+        for segment, original_value  in zip(segments, original_values):
+            conditional_value = original_value
+
+            for opt in segment['options']:
+                data_slice = data[((opt['idx']+segment['size'])*8)-1:opt['idx']*8]
+                #data_slice = data_slice.reversed
+                conditional_value = self.state.solver.If(self.state.solver.And(address == segment['start']-opt['idx'], condition), data_slice, conditional_value)
+
+            stored_values.append(dict(value=conditional_value, addr=segment['start'], size=segment['size']))
+
+        return stored_values
+
+    def _create_segment(self, addr, size, options, idx, segments):
+        segment = dict(start=addr, size=size, options=options)
+        segments.insert(idx, segment)
+
+    def _split_segment(self, addr, segments):
+        s_idx = self._get_segment_index(addr, segments)
+        segment = segments[s_idx]
+        if segment['start'] == addr:
+            return s_idx
+        assert segment['start'] < addr < segment['start'] + segment['size']
+        size_prev = addr - segment['start']
+        size_next = segment['size'] - size_prev
+        assert size_prev != 0 and size_next != 0
+        segments.pop(s_idx)
+        self._create_segment(segment['start'], size_prev, segment['options'], s_idx, segments)
+        self._create_segment(addr, size_next, [{"idx": opt["idx"] + size_prev} for opt in segment['options']], s_idx + 1, segments)
+        return s_idx + 1
+
+    def _add_segments_overlap(self, idx, addr, size, segments):
+        for i in range(idx, len(segments)):
+            segment = segments[i]
+            if addr < segment['start'] + segment['size']:
+                segments[i]["options"].append({"idx": segment['start'] - addr})
+
+    def _get_segment_index(self, addr, segments):
+        for i, segment in enumerate(segments):
+            if segment['start'] <= addr and addr < segment['start'] + segment['size']:
+                return i
+
+        return -1
+
+    def _get_segments(self, addrs, size):
+        segments = []
+        highest = 0
+        for addr in addrs:
+            if addr < highest:
+                idx = self._split_segment(addr, segments)
+                self._create_segment(highest, addr + size - highest, [], len(segments), segments)
+                self._add_segments_overlap(idx, addr, size, segments)
+            else:
+                self._create_segment(addr, size, [{'idx': 0}], len(segments), segments)
+            highest = addr + size
+        return segments
+
+    def _store_fully_symbolic(self, address, addresses, size, data, condition):
+        assert addresses is not None and self.state.solver.symbolic(address)
+        assert size is not None and self.state.solver.symbolic(size)
+
+        stored_values = [ ]
+        byte_dict = defaultdict(list)
+        max_bytes = data.length/8
+
+        # chop data into byte-chunks
+        original_values = [self._read_from(a, max_bytes) for a in addresses]
+        if endness == "Iend_LE" or (endness is None and self.endness == "Iend_LE"):
+            original_values = [ ov.reversed  for ov in original_values ]
+        data_bytes = data.chop(bits=8)
+
+        for a, fv in zip(addresses, original_values):
+            original_bytes = fv.chop(8)
+            for index, (d_byte, o_byte) in enumerate(zip(data_bytes, original_bytes)):
+                # create a dict of all all possible values for a certain address
+                byte_dict[a+index].append((a, index, d_byte, o_byte))
+
+        for byte_addr in sorted(byte_dict.keys()):
+            write_list = byte_dict[byte_addr]
+            assert len(write_list) > 0
+            assert all(v[3] is write_list[0][3] for v in write_list)
+            conditional_value = write_list[0][3]
+            for a, index, d_byte, o_byte in write_list:
+                # create the ast for each byte
+                conditional_value = self.state.solver.If(self.state.se.And(address == a, size > index, condition), d_byte, conditional_value)
+
+            stored_values.append(dict(value=conditional_value, addr=segment['start'], size=segment['size']))
+
+        return stored_values
 
     def _store_with_merge(self, req):
         req._adjust_condition(self.state)
@@ -752,9 +880,6 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         endness = req.endness
 
         req.stored_values = [ ]
-        req.simplified_values = [ ]
-        req.symbolic_sized_values = [ ]
-        req.conditional_values = [ ]
 
         if options.ABSTRACT_MEMORY not in self.state.options:
             raise SimMemoryError('store_with_merge is not supported without abstract memory.')
@@ -818,7 +943,6 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         req.completed = True
 
         # TODO: revisit the following lines
-        req.fallback_values = [ ]
         req.constraints = [ ]
 
         return req
