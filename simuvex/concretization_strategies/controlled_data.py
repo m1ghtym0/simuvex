@@ -1,6 +1,5 @@
 from itertools import groupby
 
-from ..s_errors import SimUnsatError
 from . import SimConcretizationStrategy
 
 class SimConcretizationStrategyControlledData(SimConcretizationStrategy):

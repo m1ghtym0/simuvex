@@ -787,15 +787,14 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
 
             for opt in segment['options']:
                 data_slice = data[((opt['idx']+segment['size'])*8)-1:opt['idx']*8]
-                #data_slice = data_slice.reversed
                 conditional_value = self.state.solver.If(self.state.solver.And(address == segment['start']-opt['idx'], condition), data_slice, conditional_value)
 
             stored_values.append(dict(value=conditional_value, addr=segment['start'], size=segment['size']))
 
         return stored_values
 
-    def _create_segment(self, addr, size, options, idx, segments):
-        segment = dict(start=addr, size=size, options=options)
+    def _create_segment(self, addr, size, s_options, idx, segments):
+        segment = dict(start=addr, size=size, options=s_options)
         segments.insert(idx, segment)
 
     def _split_segment(self, addr, segments):
@@ -812,7 +811,7 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         self._create_segment(addr, size_next, [{"idx": opt["idx"] + size_prev} for opt in segment['options']], s_idx + 1, segments)
         return s_idx + 1
 
-    def _add_segments_overlap(self, idx, addr, size, segments):
+    def _add_segments_overlap(self, idx, addr, segments):
         for i in range(idx, len(segments)):
             segment = segments[i]
             if addr < segment['start'] + segment['size']:
@@ -832,13 +831,13 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
             if addr < highest:
                 idx = self._split_segment(addr, segments)
                 self._create_segment(highest, addr + size - highest, [], len(segments), segments)
-                self._add_segments_overlap(idx, addr, size, segments)
+                self._add_segments_overlap(idx, addr, segments)
             else:
                 self._create_segment(addr, size, [{'idx': 0}], len(segments), segments)
             highest = addr + size
         return segments
 
-    def _store_fully_symbolic(self, address, addresses, size, data, condition):
+    def _store_fully_symbolic(self, address, addresses, size, data, endness, condition):
         assert addresses is not None and self.state.solver.symbolic(address)
         assert size is not None and self.state.solver.symbolic(size)
 
@@ -867,7 +866,7 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
                 # create the ast for each byte
                 conditional_value = self.state.solver.If(self.state.se.And(address == a, size > index, condition), d_byte, conditional_value)
 
-            stored_values.append(dict(value=conditional_value, addr=segment['start'], size=segment['size']))
+            stored_values.append(dict(value=conditional_value, addr=a, size=size))
 
         return stored_values
 
