@@ -691,9 +691,9 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         #
         # Prepare memory objects
         #
-
-        if not self.state.solver.symbolic(req.size) and not self.state.solver.symbolic(req.addr):
-            store_list = self._store_fully_concrete(req.addr, req.size, req.data, req.endness, condition)
+        # If we have only one address to write to we handle it as concrete, disregarding symbolic or not
+        if not self.state.solver.symbolic(req.size) and len(req.actual_addresses) == 1:
+            store_list = self._store_fully_concrete(req.actual_addresses[0], req.size, req.data, req.endness, condition)
         elif not self.state.solver.symbolic(req.addr):
             store_list = self._store_symbolic_size(req.addr, req.size, req.data, req.endness, condition)
         elif not self.state.solver.symbolic(req.size):
