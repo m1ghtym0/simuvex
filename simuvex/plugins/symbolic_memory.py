@@ -163,11 +163,11 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
             mo_bases = set(mo.base for mo, _ in memory_objects)
             mo_lengths = set(mo.length for mo, _ in memory_objects)
 
-            if len(unconstrained_in) == 0 and len(mos - merged_objects) == 0:
+            if not unconstrained_in and not (mos - merged_objects):
                 continue
 
             # first, optimize the case where we are dealing with the same-sized memory objects
-            if len(mo_bases) == 1 and len(mo_lengths) == 1 and len(unconstrained_in) == 0:
+            if len(mo_bases) == 1 and len(mo_lengths) == 1 and not unconstrained_in:
                 our_mo = self.mem[b]
                 to_merge = [(mo.object, fv) for mo, fv in memory_objects]
 
@@ -650,21 +650,21 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         l.debug("Doing a store...")
         req._adjust_condition(self.state)
 
-        if req.size is not None and self.state.solver.symbolic(req.size) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
-            return req
-
-        if self.state.solver.symbolic(req.addr) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
-            return req
-
-        if req.size is not None and self.state.solver.symbolic(req.size) and options.CONCRETIZE_SYMBOLIC_WRITE_SIZES in self.state.options:
-            new_size = self.state.solver.any_int(req.size)
-            req.constraints.append(req.size == new_size)
-            req.size = new_size
-
         max_bytes = req.data.length/8
 
         if req.size is None:
             req.size = claripy.BVV(max_bytes, req.data.length)
+
+        if self.state.solver.symbolic(req.size):
+            if options.AVOID_MULTIVALUED_WRITES in self.state.options:
+                return req
+            if options.CONCRETIZE_SYMBOLIC_WRITE_SIZES in self.state.options:
+                new_size = self.state.solver.any_int(req.size)
+                req.constraints.append(req.size == new_size)
+                req.size = new_size
+
+        if not self.state.solver.symbolic(req.size) and self.state.solver.any_int(req.size) > req.data.length/8:
+            raise SimMemoryError("Not enough data for requested storage size (size: {}, data: {})".format(req.size, req.data))
 
         req.constraints += [self.state.solver.ULE(req.size, max_bytes)]
 
@@ -859,7 +859,7 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
 
         for byte_addr in sorted(byte_dict.keys()):
             write_list = byte_dict[byte_addr]
-            assert len(write_list) > 0
+            assert write_list
             assert all(v[3] is write_list[0][3] for v in write_list)
             conditional_value = write_list[0][3]
             for a, index, d_byte, o_byte in write_list:

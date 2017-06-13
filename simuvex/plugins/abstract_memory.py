@@ -561,7 +561,8 @@ class SimAbstractMemory(SimMemory): #pylint:disable=abstract-method
                     sizes.append(seg.size)
                     next_pos += seg.size
 
-            if len(sizes) == 0:
+
+            if not sizes:
                 return [ size ]
             return sizes
         else:
