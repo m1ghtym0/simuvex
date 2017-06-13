@@ -103,6 +103,7 @@ class SimStackArg(SimFunctionArgument):
         self.check_value(value)
         if endness is None: endness = state.arch.memory_endness
         if stack_base is None: stack_base = state.regs.sp
+        if isinstance(value, (int, long)): value = claripy.BVV(value, self.size*8)
         state.memory.store(stack_base + self.stack_offset, value, endness=endness, size=value.length/8)
 
     def get_value(self, state, endness=None, stack_base=None, size=None):           # pylint: disable=arguments-differ
