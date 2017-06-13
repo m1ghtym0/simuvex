@@ -77,6 +77,7 @@ class SimRegArg(SimFunctionArgument):
     def set_value(self, state, value, endness=None, size=None, **kwargs):   # pylint: disable=unused-argument
         self.check_value(value)
         if endness is None: endness = state.arch.register_endness
+        if isinstance(value, (int, long)): value = claripy.BVV(value, self.size*8)
         if size is None: size = min(self.size, value.length / 8)
         offset = self._fix_offset(state, size)
         state.registers.store(offset, value, endness=endness, size=size)
