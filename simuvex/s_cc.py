@@ -511,7 +511,7 @@ class SimCC(object):
             if val.length > loc.size * 8:
                 raise ValueError("Can't fit value {} into location {}".format(repr(val), repr(loc)))
             loc.set_value(state, val, endness='Iend_BE', stack_base=stack_base)
-        self.return_addr.set_value(state, claripy.BVV(ret_addr, self.return_addr.size*8), stack_base=stack_base)
+        self.return_addr.set_value(state, ret_addr, stack_base=stack_base)
 
     # pylint: disable=unused-argument
     def get_return_val(self, state, is_fp=None, size=None, stack_base=None):
