@@ -663,6 +663,9 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
                 req.constraints.append(req.size == new_size)
                 req.size = new_size
 
+        if self.state.solver.symbolic(req.addr) and options.AVOID_MULTIVALUED_WRITES in self.state.options:
+            return req
+
         if not self.state.solver.symbolic(req.size) and self.state.solver.any_int(req.size) > req.data.length/8:
             raise SimMemoryError("Not enough data for requested storage size (size: {}, data: {})".format(req.size, req.data))
 
@@ -866,7 +869,7 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
                 # create the ast for each byte
                 conditional_value = self.state.solver.If(self.state.se.And(address == a, size > index, condition), d_byte, conditional_value)
 
-            stored_values.append(dict(value=conditional_value, addr=a, size=size))
+            stored_values.append(dict(value=conditional_value, addr=byte_addr, size=1))
 
         return stored_values
 
