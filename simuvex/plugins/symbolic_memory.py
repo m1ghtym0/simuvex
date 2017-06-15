@@ -464,7 +464,7 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
                 start_addr = mo.last_addr + 1
                 end_addr = last_missing - mo.last_addr
                 fill_mo = self._fill_missing(start_addr, end_addr)
-                segments.append(fill_mo.bytes_at(start_addr, end_addr))
+                segments.append(fill_mo.bytes_at(start_addr, end_addr).reversed)
                 last_missing = mo.last_addr
 
             # add the normal segment
