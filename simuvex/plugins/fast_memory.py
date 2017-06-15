@@ -159,10 +159,7 @@ class SimFastMemory(SimMemory):
 
         if (self.category == 'mem' and options.SIMPLIFY_MEMORY_WRITES in self.state.options) or \
            (self.category == 'reg' and options.SIMPLIFY_REGISTER_WRITES in self.state.options):
-            simplified_values = [ self.state.se.simplify(data) ]
-        else:
-            simplified_values = [ data ]
-        data = simplified_values[0]
+            data = self.state.se.simplify(data)
 
         accesses = self._resolve_access(addr, size)
         if len(accesses) == 1:

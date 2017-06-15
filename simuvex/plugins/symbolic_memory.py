@@ -737,9 +737,6 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         self.mem.store_memory_object(mo)
 
     def _store_fully_concrete(self, address, size, data, endness, condition):
-        assert address is not None and not self.state.solver.symbolic(address)
-        assert size is not None and not self.state.solver.symbolic(size)
-
         size = self.state.solver.any_int(size)
         if size < data.length/8:
             data = data[size*8-1:]
@@ -753,9 +750,6 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
 
 
     def _store_symbolic_size(self, address, size, data, endness, condition):
-        assert address is not None and not self.state.solver.symbolic(address)
-        assert size is not None and self.state.solver.symbolic(size)
-
         address = self.state.solver.any_int(address)
         max_bytes = data.length/8
         original_value =  self._read_from(address, max_bytes)
@@ -775,8 +769,6 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         return [ dict(value=conditional_value, addr=address, size=max_bytes) ]
 
     def _store_symbolic_addr(self, address,  addresses, size, data, endness, condition):
-        assert address is not None and self.state.solver.symbolic(address)
-        assert size is not None and not self.state.solver.symbolic(size)
         size = self.state.solver.any_int(size)
         segments = self._get_segments(addresses, size)
 
@@ -841,9 +833,6 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
         return segments
 
     def _store_fully_symbolic(self, address, addresses, size, data, endness, condition):
-        assert addresses is not None and self.state.solver.symbolic(address)
-        assert size is not None and self.state.solver.symbolic(size)
-
         stored_values = [ ]
         byte_dict = defaultdict(list)
         max_bytes = data.length/8
@@ -862,7 +851,7 @@ class SimSymbolicMemory(SimMemory): #pylint:disable=abstract-method
 
         for byte_addr in sorted(byte_dict.keys()):
             write_list = byte_dict[byte_addr]
-            assert write_list
+            # If this assertion fails something is really wrong!
             assert all(v[3] is write_list[0][3] for v in write_list)
             conditional_value = write_list[0][3]
             for a, index, d_byte, o_byte in write_list:

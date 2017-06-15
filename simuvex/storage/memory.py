@@ -478,7 +478,6 @@ class SimMemory(SimStatePlugin):
         if size_e is not None and self.category == 'reg' and len(data_e) < stored_size:
             data_e = data_e.zero_extend(stored_size - len(data_e))
 
-
         if type(size_e) in (int, long):
             size_e = self.state.se.BVV(size_e, self.state.arch.bits)
 
